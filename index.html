@@ -74,19 +74,33 @@
     .grid-in {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 1rem;
+      grid-template-rows: auto minmax(12.5rem, 1fr) auto;
+      column-gap: 1rem;
       margin-bottom: 0.85rem;
+      align-items: stretch;
     }
-    @media (max-width: 860px) { .grid-in { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) {
+      .grid-in {
+        grid-template-columns: 1fr;
+        grid-template-rows: none;
+      }
+      .panel { display: flex; flex-direction: column; grid-row: auto; }
+    }
     .panel {
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-row: span 3;
       background: #f8fafc;
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 0.85rem 0.95rem 1rem;
+      row-gap: 0.45rem;
     }
+    .panel-top { min-height: 0; }
     textarea {
       width: 100%;
       min-height: 12.5rem;
+      height: 100%;
       resize: vertical;
       font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
       font-size: 0.78rem;
@@ -285,23 +299,27 @@
 
     <div class="grid-in">
       <section class="panel" id="pdfPanel">
-        <h2 class="section">왼쪽 · 견적 / 청구서</h2>
-        <p class="hint">AUDATEX PDF를 고르거나, 탐색기에서 파일을 복사한 뒤 이 창에서 Ctrl+V로 붙여 넣으세요. 파일이 두 개면 한쪽에 이어 붙입니다. 스캔본이거나 추출이 깨지면 아래에 <code>금액 + 이름</code>으로 붙여 넣으세요.</p>
-        <div class="row">
-          <input type="file" id="pdfFiles" accept="application/pdf,.pdf" multiple />
-        </div>
-        <p class="hint">PDF 파일 붙여넣기: Ctrl+V · 왼쪽 칸에 끌어다 놓기도 됩니다.</p>
-        <div class="row chips" id="kindChips">
-          <label><input type="checkbox" name="kind" value="parts" checked /> 부품</label>
-          <label><input type="checkbox" name="kind" value="labor" /> 공임</label>
-          <label><input type="checkbox" name="kind" value="paint" /> 도장</label>
+        <div class="panel-top">
+          <h2 class="section">왼쪽 · 견적 / 청구서</h2>
+          <p class="hint">AUDATEX PDF를 고르거나, 탐색기에서 파일을 복사한 뒤 이 창에서 Ctrl+V로 붙여 넣으세요. 파일이 두 개면 한쪽에 이어 붙입니다. 스캔본이거나 추출이 깨지면 아래에 <code>금액 + 이름</code>으로 붙여 넣으세요.</p>
+          <div class="row">
+            <input type="file" id="pdfFiles" accept="application/pdf,.pdf" multiple />
+          </div>
+          <p class="hint">PDF 파일 붙여넣기: Ctrl+V · 왼쪽 칸에 끌어다 놓기도 됩니다.</p>
+          <div class="row chips" id="kindChips">
+            <label><input type="checkbox" name="kind" value="parts" checked /> 부품</label>
+            <label><input type="checkbox" name="kind" value="labor" /> 공임</label>
+            <label><input type="checkbox" name="kind" value="paint" /> 도장</label>
+          </div>
         </div>
         <textarea id="pdfText" placeholder="876000&#9;FR BUMPER&#10;5500&#9;BLIND RIVET"></textarea>
         <div id="pdfMsg"></div>
       </section>
       <section class="panel">
-        <h2 class="section">오른쪽 · Tesla 품목</h2>
-        <p class="hint">RO 화면의 Part Description 표를 복사해 붙여 넣습니다. Cost로 맞추고, 할인 후(Cost − Credit)도 표시합니다.</p>
+        <div class="panel-top">
+          <h2 class="section">오른쪽 · Tesla 품목</h2>
+          <p class="hint">RO 화면의 Part Description 표를 복사해 붙여 넣습니다. Cost로 맞추고, 할인 후(Cost − Credit)도 표시합니다.</p>
+        </div>
         <textarea id="teslaText" placeholder="1776963-00-A&#10;BLT,PN.M6x24...&#10;1&#10;(1)&#10;7&#10;₩224.00&#10;%&#10;₩3,200.00"></textarea>
         <div id="teslaMsg"></div>
       </section>
@@ -517,7 +535,34 @@
         items.push(it);
       }
     }
+    if (!items.some(function (x) { return x.kind === "parts"; })) {
+      var loose = parsePartsLoose(text, source);
+      for (i = 0; i < loose.length; i++) items.push(loose[i]);
+    }
     return { items: items, totals: totals, source: source || "" };
+  }
+
+  function parsePartsLoose(text, source) {
+    var items = [];
+    var seen = {};
+    var blob = String(text || "").replace(/\s+/g, " ");
+    var re = /(\d{3,5})\s+(?:(\d+)\s+P?\s+)?([A-Z][A-Z0-9\/ .'&-]{1,50}?)\s+([:+]?[A-Z0-9]{8,14})\s+(\d{3,7})\*?/g;
+    var m, key;
+    while ((m = re.exec(blob))) {
+      key = m[4] + ":" + m[5];
+      if (seen[key]) continue;
+      seen[key] = true;
+      items.push({
+        kind: "parts",
+        code: m[1],
+        qty: m[2] ? Number(m[2]) : 1,
+        label: m[3].replace(/\s+/g, " ").trim(),
+        extra: m[4].replace(/^[:+]/, ""),
+        amount: Number(m[5]),
+        source: source || ""
+      });
+    }
+    return items;
   }
 
   function looksLikeAudatex(text) {
@@ -737,20 +782,46 @@
       }
       all = all.concat(filtered);
     }
-    pdfText.value = itemsToText(all);
-    pdfMsg.innerHTML = all.length
-      ? '<p class="okmsg">' + all.length + "줄 추출 · 필요하면 왼쪽 상자에서 줄을 지우거나 금액을 고치세요.</p>"
-      : '<p class="err">금액 행을 찾지 못했습니다. 견적 텍스트를 직접 붙여 넣으세요.</p>';
+    if (all.length) {
+      pdfText.value = itemsToText(all);
+      pdfMsg.innerHTML = '<p class="okmsg">' + all.length + "줄 추출 · 필요하면 왼쪽 상자에서 줄을 지우거나 금액을 고치세요.</p>";
+      return;
+    }
+    pdfText.value = rawBySource.map(function (d) { return d.text; }).join("\n\n");
+    pdfMsg.innerHTML = pdfText.value.trim()
+      ? '<p class="err">표 형태는 못 읽었지만 텍스트는 넣었습니다. 금액과 이름을 한 줄씩 맞춰 주세요.</p>'
+      : '<p class="err">PDF에서 글자를 읽지 못했습니다. Chrome 또는 Edge에서 이 HTML을 직접 여세요. 스캔본이면 텍스트로 붙여 넣으세요.</p>';
   }
 
   function rebuildLinesFromPdf(content) {
-    var rows = {};
-    var i, it, y, x, key, ys;
-    for (i = 0; i < content.items.length; i++) {
-      it = content.items[i];
+    var items = (content && content.items) || [];
+    var i, it, useEol = false, parts, line, rows, y, x, key, ys;
+    for (i = 0; i < items.length; i++) {
+      if (items[i] && items[i].hasEOL) {
+        useEol = true;
+        break;
+      }
+    }
+    if (useEol) {
+      parts = [];
+      line = [];
+      for (i = 0; i < items.length; i++) {
+        it = items[i];
+        if (it.str) line.push(it.str);
+        if (it.hasEOL) {
+          parts.push(line.join("").replace(/\s+/g, " ").trim());
+          line = [];
+        }
+      }
+      if (line.length) parts.push(line.join("").replace(/\s+/g, " ").trim());
+      return parts.filter(Boolean).join("\n");
+    }
+    rows = {};
+    for (i = 0; i < items.length; i++) {
+      it = items[i];
       if (!it.str || !String(it.str).trim()) continue;
-      y = Math.round(it.transform[5] * 2) / 2;
-      x = it.transform[4];
+      y = Math.round((it.transform ? it.transform[5] : 0) / 5) * 5;
+      x = it.transform ? it.transform[4] : 0;
       key = String(y);
       if (!rows[key]) rows[key] = [];
       rows[key].push({ x: x, str: it.str });
@@ -762,10 +833,34 @@
     }).filter(Boolean).join("\n");
   }
 
+  function readFileBuffer(file) {
+    if (file && typeof file.arrayBuffer === "function") return file.arrayBuffer();
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(r.result); };
+      r.onerror = function () { reject(new Error("파일을 읽을 수 없습니다.")); };
+      r.readAsArrayBuffer(file);
+    });
+  }
+
   function readPdfFile(file) {
-    return file.arrayBuffer().then(function (buf) {
-      if (typeof pdfjsLib === "undefined") throw new Error("PDF 라이브러리를 불러오지 못했습니다.");
-      return pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    return readFileBuffer(file).then(function (buf) {
+      if (typeof pdfjsLib === "undefined") {
+        throw new Error("PDF 라이브러리를 불러오지 못했습니다. Chrome 또는 Edge에서 HTML을 직접 열어 주세요.");
+      }
+      var data = new Uint8Array(buf);
+      if (data.length < 5 || String.fromCharCode(data[0], data[1], data[2], data[3]) !== "%PDF") {
+        throw new Error("PDF 형식이 아닙니다: " + (file.name || "파일"));
+      }
+      return pdfjsLib.getDocument({
+        data: data,
+        disableStream: true,
+        disableRange: true,
+        disableAutoFetch: true,
+        useSystemFonts: true,
+        isEvalSupported: true,
+        verbosity: 0
+      }).promise;
     }).then(function (pdf) {
       var pages = [];
       var p = 1;
@@ -845,7 +940,17 @@
   }
 
   function loadPdfs() {
-    ingestPdfFiles(pdfFiles.files, false);
+    var files = [];
+    var i;
+    if (pdfFiles.files) {
+      for (i = 0; i < pdfFiles.files.length; i++) files.push(pdfFiles.files[i]);
+    }
+    if (!files.length) {
+      pdfMsg.innerHTML = '<p class="err">PDF 파일을 선택하세요.</p>';
+      return;
+    }
+    heldPdfFiles = files.slice(0, 2);
+    loadHeldPdfs();
   }
 
   function loadHeldPdfs() {
@@ -877,14 +982,28 @@
       '<div class="amt">' + fmtWon(it.amount) + "</div></div>";
   }
 
+  function fmtPct(n) {
+    if (n === null || n === undefined || isNaN(n) || Number(n) === 0) return "";
+    var x = Math.round(Number(n) * 10) / 10;
+    return (x === Math.round(x) ? String(Math.round(x)) : x.toFixed(1)) + "%";
+  }
+
+  function discountPct(it) {
+    if (it.discount) return it.discount;
+    if (it.cost && it.credit) return 100 * it.credit / it.cost;
+    return 0;
+  }
+
   function rightCard(it, cls) {
     if (!it) return '<div class="item empty">Tesla에 없음</div>';
+    var pct = fmtPct(discountPct(it));
     return '<div class="item ' + cls + '">' +
       '<div class="name">' + esc(it.pn) + "</div>" +
       (it.desc ? '<div class="desc">' + esc(it.desc) + "</div>" : "") +
       '<div class="meta">수량 ' + esc(it.qty) + "</div>" +
       '<div class="amt">Cost ' + fmtWon(it.cost) + "</div>" +
-      '<div class="net">할인후 ' + fmtWon(it.net) + (it.credit ? " (Credit " + fmtWon(it.credit) + ")" : "") + "</div></div>";
+      '<div class="net">할인후 ' + fmtWon(it.net) + (pct ? " (" + pct + ")" : "") +
+      (it.credit ? " · Credit " + fmtWon(it.credit) : "") + "</div></div>";
   }
 
   function linkHtml(row) {
@@ -940,12 +1059,13 @@
     var deltaTxt = diff === 0
       ? "동일"
       : (diff > 0 ? "Tesla가 " + fmtWon(diff) + " 더 큼" : "견적이 " + fmtWon(-diff) + " 더 큼");
+    var netPct = costSum ? fmtPct(100 * (costSum - netSum) / costSum) : "";
     sums.hidden = false;
     legend.hidden = false;
     sums.innerHTML =
       '<div class="sum"><div class="k">견적 행 합계</div><div class="v">' + fmtWon(leftSum) + "</div></div>" +
       '<div class="sum"><div class="k">Tesla Cost 합계</div><div class="v">' + fmtWon(costSum) + "</div></div>" +
-      '<div class="sum"><div class="k">Tesla 할인후 합계</div><div class="v">' + fmtWon(netSum) + "</div></div>" +
+      '<div class="sum"><div class="k">Tesla 할인후 합계</div><div class="v">' + fmtWon(netSum) + (netPct ? " (" + netPct + ")" : "") + "</div></div>" +
       '<div class="sum delta' + deltaCls + '"><div class="k">Cost 기준 차이</div><div class="v">' + deltaTxt + "</div></div>";
 
     var html = '<div class="heads"><div>견적 / 청구</div><div></div><div>Tesla</div></div>';
