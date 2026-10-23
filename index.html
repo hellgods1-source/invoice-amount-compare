@@ -397,22 +397,32 @@
     return set;
   }
 
+  function stripPageFooter(line) {
+    return String(line || "")
+      .replace(/\s*AUDATEX(?:\s+SYSTEM)?(?:\s+페이지\s*\d+)?\s*$/i, "")
+      .replace(/\s*페이지\s*\d+\s*$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function skipNoise(line) {
-    var s = line.replace(/\s+/g, " ").trim();
+    var s = stripPageFooter(line);
     if (!s) return true;
-    if (/AUDATEX|페이지|청구서\s+NO|부품 가격적용일|코\s*드\s+수량|작업코드\s+작업항목/.test(s)) return true;
+    if (/청구서\s+NO|부품 가격적용일|코\s*드\s+수량|작업코드\s+작업항목/.test(s)) return true;
     if (/^-{5,}$/.test(s)) return true;
     if (/포함작업:|^탈\/부착$|^\(/.test(s)) return true;
     if (/최종계산|총 공임|총 부품|총 수리비|총 합계|VAT%|자기부담금|코멘트\s*:/.test(s)) return true;
     return false;
   }
 
+  var PART_PN = "[:+]?(?:\\d{7,8}-[A-Z0-9]{2,3}-[A-Z0-9]+|[A-Z0-9]{8,})";
+
   function parsePartLine(line) {
-    var s = line.replace(/\s+/g, " ").trim();
-    var m = s.match(/^(\d{3,5})\s+(?:(\d+)\s+(P\s+)?)?(.+)$/);
+    var s = stripPageFooter(line);
+    var m = s.match(/^([A-Z]?\d{3,5})\s+(?:(\d+)\s+(P\s+)?)?(.+)$/);
     if (!m) return null;
     var rest = m[4].replace(/\s+\*$/, "").trim();
-    var withPn = rest.match(/^(.*\S)\s+([:+]?[A-Z0-9]{8,})\s+(\d{3,})\*?$/);
+    var withPn = rest.match(new RegExp("^(.*\\S)\\s+(" + PART_PN + ")\\s+(\\d{3,})\\*?$"));
     if (withPn) {
       return {
         kind: "parts",
@@ -496,7 +506,7 @@
     var i, line, s, it, tm;
     for (i = 0; i < lines.length; i++) {
       line = lines[i];
-      s = line.replace(/\s+/g, " ").trim();
+      s = stripPageFooter(line);
       if (!s) continue;
       if (/최종계산/.test(s)) {
         section = "total";
@@ -535,9 +545,18 @@
         items.push(it);
       }
     }
-    if (!items.some(function (x) { return x.kind === "parts"; })) {
-      var loose = parsePartsLoose(text, source);
-      for (i = 0; i < loose.length; i++) items.push(loose[i]);
+    var have = {};
+    var key;
+    for (i = 0; i < items.length; i++) {
+      if (items[i].kind !== "parts") continue;
+      have[(items[i].extra || "") + ":" + items[i].amount] = true;
+    }
+    var loose = parsePartsLoose(text, source);
+    for (i = 0; i < loose.length; i++) {
+      key = (loose[i].extra || "") + ":" + loose[i].amount;
+      if (have[key]) continue;
+      items.push(loose[i]);
+      have[key] = true;
     }
     return { items: items, totals: totals, source: source || "" };
   }
@@ -545,8 +564,10 @@
   function parsePartsLoose(text, source) {
     var items = [];
     var seen = {};
-    var blob = String(text || "").replace(/\s+/g, " ");
-    var re = /(\d{3,5})\s+(?:(\d+)\s+P?\s+)?([A-Z][A-Z0-9\/ .'&-]{1,50}?)\s+([:+]?[A-Z0-9]{8,14})\s+(\d{3,7})\*?/g;
+    var blob = String(text || "").replace(/\s+/g, " ")
+      .replace(/AUDATEX(?:\s+SYSTEM)?(?:\s+페이지\s*\d+)?/gi, " ")
+      .replace(/페이지\s*\d+/g, " ");
+    var re = new RegExp("([A-Z]?\\d{3,5})\\s+(?:(\\d+)\\s+P?\\s+)?([A-Z][A-Z0-9\\/ .'&-]{1,50}?)\\s+(" + PART_PN + ")\\s+(\\d{3,7})\\*?", "g");
     var m, key;
     while ((m = re.exec(blob))) {
       key = m[4] + ":" + m[5];
